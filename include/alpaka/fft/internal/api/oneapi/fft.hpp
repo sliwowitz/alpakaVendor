@@ -300,6 +300,12 @@ namespace alpaka::fft::internal
         {
         }
 
+        /** How many executions of this plan have not completed: none are tracked. */
+        [[nodiscard]] std::size_t pendingCompletions() const
+        {
+            return 0u;
+        }
+
         void execute(auto& queue, auto const& in, auto& out, Direction direction)
         {
             if(m_options.workspacePolicy == WorkspacePolicy::userProvided && m_workspaceBytes > 0u)

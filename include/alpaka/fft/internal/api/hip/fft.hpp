@@ -6,6 +6,7 @@
 #pragma once
 
 #include "alpaka/fft/internal/api/config.hpp"
+#include "alpaka/fft/internal/pending.hpp"
 
 #include <algorithm>
 #include <array>
@@ -90,8 +91,7 @@ namespace alpaka::fft::internal
             , m_execInfo{std::exchange(other.m_execInfo, nullptr)}
             , m_workspaceBytes{std::exchange(other.m_workspaceBytes, 0u)}
         {
-            std::lock_guard lock(other.m_pendingWaitsMutex);
-            m_pendingWaits = std::move(other.m_pendingWaits);
+            m_pending = std::move(other.m_pending);
         }
 
         PlanImpl& operator=(PlanImpl&& other) noexcept
@@ -106,10 +106,7 @@ namespace alpaka::fft::internal
                 m_inversePlan = std::exchange(other.m_inversePlan, nullptr);
                 m_execInfo = std::exchange(other.m_execInfo, nullptr);
                 m_workspaceBytes = std::exchange(other.m_workspaceBytes, 0u);
-                {
-                    std::scoped_lock lock(m_pendingWaitsMutex, other.m_pendingWaitsMutex);
-                    m_pendingWaits = std::move(other.m_pendingWaits);
-                }
+                m_pending = std::move(other.m_pending);
             }
             return *this;
         }
@@ -315,10 +312,13 @@ namespace alpaka::fft::internal
 
         void trackCompletion(auto& queue)
         {
-            auto event = queue.getDevice().makeEvent();
-            queue.enqueue(event);
-            std::lock_guard lock(m_pendingWaitsMutex);
-            m_pendingWaits.emplace_back([event]() mutable { alpaka::onHost::wait(event); });
+            m_pending.track(queue);
+        }
+
+        /** How many executions of this plan have not completed. */
+        [[nodiscard]] std::size_t pendingCompletions() const
+        {
+            return m_pending.size();
         }
 
         void execute(auto& queue, auto const& in, auto& out, Direction direction)
@@ -363,25 +363,10 @@ namespace alpaka::fft::internal
     private:
         void waitForPending() noexcept
         {
-            std::vector<std::function<void()>> waits;
-            {
-                std::lock_guard lock(m_pendingWaitsMutex);
-                waits.swap(m_pendingWaits);
-            }
-            for(auto& waitFn : waits)
-            {
-                try
-                {
-                    waitFn();
-                }
-                catch(...)
-                {
-                }
-            }
+            m_pending.wait();
         }
 
-        std::mutex m_pendingWaitsMutex;
-        std::vector<std::function<void()>> m_pendingWaits;
+        PendingCompletions m_pending;
     };
 } // namespace alpaka::fft::internal
 #endif

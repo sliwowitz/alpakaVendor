@@ -6,7 +6,9 @@
 #pragma once
 
 #include "alpaka/fft/internal/api/config.hpp"
+#include "alpaka/fft/internal/pending.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -68,8 +70,7 @@ namespace alpaka::fft::internal
             , m_handle{std::exchange(other.m_handle, 0)}
             , m_workspaceBytes{std::exchange(other.m_workspaceBytes, 0u)}
         {
-            std::lock_guard lock(other.m_pendingWaitsMutex);
-            m_pendingWaits = std::move(other.m_pendingWaits);
+            m_pending = std::move(other.m_pending);
         }
 
         PlanImpl& operator=(PlanImpl&& other) noexcept
@@ -82,10 +83,7 @@ namespace alpaka::fft::internal
                 m_options = other.m_options;
                 m_handle = std::exchange(other.m_handle, 0);
                 m_workspaceBytes = std::exchange(other.m_workspaceBytes, 0u);
-                {
-                    std::scoped_lock lock(m_pendingWaitsMutex, other.m_pendingWaitsMutex);
-                    m_pendingWaits = std::move(other.m_pendingWaits);
-                }
+                m_pending = std::move(other.m_pending);
             }
             return *this;
         }
@@ -226,10 +224,13 @@ namespace alpaka::fft::internal
 
         void trackCompletion(auto& queue)
         {
-            auto event = queue.getDevice().makeEvent();
-            queue.enqueue(event);
-            std::lock_guard lock(m_pendingWaitsMutex);
-            m_pendingWaits.emplace_back([event]() mutable { alpaka::onHost::wait(event); });
+            m_pending.track(queue);
+        }
+
+        /** How many executions of this plan have not completed. */
+        [[nodiscard]] std::size_t pendingCompletions() const
+        {
+            return m_pending.size();
         }
 
         static void executeComplex(cufftHandle handle, auto* rawInPtr, auto* rawOutPtr, Direction direction)
@@ -282,6 +283,17 @@ namespace alpaka::fft::internal
             auto* rawInPtr = removeCvPtr(in.data());
             auto* rawOutPtr = removeCvPtr(out.data());
             using QueueNative = decltype(queue.getNativeHandle());
+            if constexpr(!ComplexScalar<T_Value>)
+            {
+                /* cuFFT refuses the execution, not the plan, when a real field starts at another address, so
+                 * the refusal is stated here with its reason. */
+                auto const* real = direction == Direction::forward ? static_cast<void const*>(rawInPtr)
+                                                                   : static_cast<void const*>(rawOutPtr);
+                validate(
+                    reinterpret_cast<std::uintptr_t>(real) % sizeof(typename traits::complex_type) == 0u,
+                    "cuFFT reads a real field that starts at a multiple of the size of its complex value, and this "
+                    "field does not.");
+            }
             if constexpr(ComplexScalar<T_Value>)
             {
                 queue.enqueueNativeFn(
@@ -309,25 +321,10 @@ namespace alpaka::fft::internal
     private:
         void waitForPending() noexcept
         {
-            std::vector<std::function<void()>> waits;
-            {
-                std::lock_guard lock(m_pendingWaitsMutex);
-                waits.swap(m_pendingWaits);
-            }
-            for(auto& waitFn : waits)
-            {
-                try
-                {
-                    waitFn();
-                }
-                catch(...)
-                {
-                }
-            }
+            m_pending.wait();
         }
 
-        std::mutex m_pendingWaitsMutex;
-        std::vector<std::function<void()>> m_pendingWaits;
+        PendingCompletions m_pending;
     };
 } // namespace alpaka::fft::internal
 #endif

@@ -63,6 +63,12 @@ namespace alpaka::fft::onHost
             return m_impl->workspaceBytes();
         }
 
+        /** How many executions of this plan have not completed on their queues. */
+        [[nodiscard]] std::size_t pendingCompletions() const
+        {
+            return m_impl->pendingCompletions();
+        }
+
         /** Bind user-managed workspace to this plan.
          *
          * The storage must remain valid for every later execution that uses this plan. Rebinding replaces the
@@ -236,6 +242,16 @@ namespace alpaka::fft::onHost
         [[nodiscard]] auto build(alpaka::onHost::internal::concepts::Device auto& device) const
         {
             auto queue = device.makeQueue();
+            return makePlanFromQueue(queue);
+        }
+
+        /** Create a backend-specific plan on the caller's queue.
+         *
+         * The queue selects the device and the backend, and the plan is bound to it at creation. The name
+         * differs from build(), because the device concept is not evaluated on a queue.
+         */
+        [[nodiscard]] auto buildOn(alpaka::onHost::internal::concepts::Queue auto& queue) const
+        {
             return makePlanFromQueue(queue);
         }
 
