@@ -25,6 +25,9 @@ option(alpakaV_DEP_CUBLAS "Enable cuBLAS CUDA backend." OFF)
 option(alpakaV_DEP_ROCFFT "Enable rocFFT HIP backend." OFF)
 option(alpakaV_DEP_ROCBLAS "Enable rocBLAS HIP backend." OFF)
 option(alpakaV_DEP_ONEMKL "Enable oneMKL DFT and BLAS oneAPI backends." OFF)
+option(alpakaV_DEP_CUB "Enable the CUB CUDA sort backend." OFF)
+option(alpakaV_DEP_ROCPRIM "Enable the rocPRIM HIP sort backend." OFF)
+option(alpakaV_DEP_ONEDPL "Enable the oneDPL oneAPI sort backend." OFF)
 option(alpakaV_DOCS "Build documentation and code snippets." OFF)
 
 if(alpaka_DEP_HIP)
@@ -65,6 +68,13 @@ endif()
 
 if(alpakaV_DEP_CUBLAS)
     find_package(CUDAToolkit REQUIRED)
+endif()
+if(alpakaV_DEP_CUB)
+    find_package(CUDAToolkit REQUIRED)
+    find_package(CCCL REQUIRED CONFIG COMPONENTS CUB HINTS "${CUDAToolkit_LIBRARY_DIR}/cmake/cccl")
+endif()
+if(alpakaV_DEP_ROCPRIM)
+    find_package(rocprim REQUIRED CONFIG HINTS "$ENV{ROCM_PATH}" /opt/rocm PATH_SUFFIXES lib/cmake/rocprim)
 endif()
 
 if(alpakaV_DEP_ROCFFT)
@@ -113,6 +123,9 @@ target_compile_definitions(
         ALPAKAV_DEP_ROCFFT=$<BOOL:${alpakaV_DEP_ROCFFT}>
         ALPAKAV_DEP_ROCBLAS=$<BOOL:${alpakaV_DEP_ROCBLAS}>
         ALPAKAV_DEP_ONEMKL=$<BOOL:${alpakaV_DEP_ONEMKL}>
+        ALPAKAV_DEP_CUB=$<BOOL:${alpakaV_DEP_CUB}>
+        ALPAKAV_DEP_ROCPRIM=$<BOOL:${alpakaV_DEP_ROCPRIM}>
+        ALPAKAV_DEP_ONEDPL=$<BOOL:${alpakaV_DEP_ONEDPL}>
 )
 if(alpakaV_DEP_FFTW)
     target_link_libraries(alpakaVendor INTERFACE PkgConfig::FFTW3)
@@ -125,6 +138,13 @@ if(alpakaV_DEP_CUFFT)
 endif()
 if(alpakaV_DEP_CUBLAS)
     target_link_libraries(alpakaVendor INTERFACE CUDA::cublas)
+endif()
+# The CCCL and rocPRIM targets are not exported: an installed consumer finds them as it finds alpaka.
+if(alpakaV_DEP_CUB)
+    target_link_libraries(alpakaVendor INTERFACE $<BUILD_INTERFACE:CCCL::CUB>)
+endif()
+if(alpakaV_DEP_ROCPRIM)
+    target_link_libraries(alpakaVendor INTERFACE $<BUILD_INTERFACE:roc::rocprim>)
 endif()
 if(alpakaV_DEP_ROCFFT)
     target_link_libraries(alpakaVendor INTERFACE roc::rocfft)
